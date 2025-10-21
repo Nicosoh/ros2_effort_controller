@@ -21,7 +21,7 @@ cartesian_impedance_controller:
     robot_base_link: "base_link"
     ft_sensor_ref_link: "sensor_link"
     command_current_configuration: false # for KUKA set this to true, for other robots set to false
-    max_impedance_force: 10.0 # (N) maximum task force
+    max_impedance_force: 10.0 # (N) maximum task force (Not implemented yed)
     delta_tau_max: 1.0 # (Nm) maximum torque increment in one control cycle
     joints:
       - joint1
@@ -40,12 +40,12 @@ cartesian_impedance_controller:
       - velocity
 
     stiffness:
-        trans_x: 500
-        trans_y: 500
-        trans_z: 500
-        rot_x: 50
-        rot_y: 50
-        rot_z: 50
+        trans_x: 500.0
+        trans_y: 500.0
+        trans_z: 500.0
+        rot_x: 50.0
+        rot_y: 50.0
+        rot_z: 50.0
 
     nullspace_stiffness: 1.0
     nullspace_configuration:
