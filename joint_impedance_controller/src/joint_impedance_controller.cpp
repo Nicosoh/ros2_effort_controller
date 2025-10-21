@@ -12,7 +12,10 @@ JointImpedanceController::on_init() {
                  CallbackReturn::SUCCESS) {
     return ret;
   }
-
+  auto_declare<std::string>("frame_topic_name",
+                            "joint_impedance_controller/target_frame");
+  auto_declare<std::string>("wrench_topic_name",
+                            "joint_impedance_controller/target_wrench");
   auto_declare<std::string>("ft_sensor_ref_link", "");
   auto_declare<bool>("hand_frame_control", true);
   auto_declare<double>("nullspace_stiffness", 0.0);
@@ -36,6 +39,11 @@ JointImpedanceController::on_configure(
                  CallbackReturn::SUCCESS) {
     return ret;
   }
+
+  m_frame_topic_name =
+      get_node()->get_parameter("frame_topic_name").as_string();
+  m_wrench_topic_name =
+      get_node()->get_parameter("wrench_topic_name").as_string();
 
   // Make sure sensor link is part of the robot chain
   m_ft_sensor_ref_link =
@@ -82,7 +90,7 @@ JointImpedanceController::on_configure(
 
   m_target_wrench_subscriber =
       get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
-          get_node()->get_name() + std::string("/target_wrench"), 10,
+          m_wrench_topic_name, 10,
           std::bind(&JointImpedanceController::targetWrenchCallback, this,
                     std::placeholders::_1));
 
@@ -95,7 +103,7 @@ JointImpedanceController::on_configure(
 
   m_target_frame_subscriber =
       get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
-          get_node()->get_name() + std::string("/target_frame"), 3,
+          m_frame_topic_name, 3,
           std::bind(&JointImpedanceController::targetFrameCallback, this,
                     std::placeholders::_1));
 

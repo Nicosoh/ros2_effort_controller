@@ -11,7 +11,6 @@
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
 
-
 #define DEBUG 0
 #if LOGGING
 #include <matlogger2/matlogger2.h>
@@ -89,6 +88,7 @@ class CartesianImpedanceController
 #if LOGGING
   XBot::MatLogger2::Ptr m_logger;
 #endif
+  std::string m_frame_topic_name, m_wrench_topic_name;
   KDL::Frame m_target_frame;
   ctrl::Vector6D m_ft_sensor_wrench;
   std::string m_ft_sensor_ref_link;
@@ -98,7 +98,7 @@ class CartesianImpedanceController
   KDL::Frame m_current_frame;
 
   ctrl::MatrixND m_identity;
-  ctrl::VectorND m_q_ns; // Null space configuration
+  ctrl::VectorND m_q_ns;  // Null space configuration
 
   double m_vel_old = 0.0;
   double current_acc_j0 = 0.0;

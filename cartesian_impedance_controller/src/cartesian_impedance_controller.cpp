@@ -12,7 +12,10 @@ CartesianImpedanceController::on_init() {
                  CallbackReturn::SUCCESS) {
     return ret;
   }
-
+  auto_declare<std::string>("frame_topic_name",
+                            "cartesian_impedance_controller/target_frame");
+  auto_declare<std::string>("wrench_topic_name",
+                            "cartesian_impedance_controller/target_wrench");
   auto_declare<std::string>("ft_sensor_ref_link", "");
   auto_declare<bool>("hand_frame_control", true);
   auto_declare<double>("nullspace_stiffness", 0.0);
@@ -28,7 +31,7 @@ CartesianImpedanceController::on_init() {
   auto_declare<double>("stiffness.rot_x", default_rot_stiff);
   auto_declare<double>("stiffness.rot_y", default_rot_stiff);
   auto_declare<double>("stiffness.rot_z", default_rot_stiff);
-  auto_declare<double>("max_impedance_force", 70.0); // TODO
+  auto_declare<double>("max_impedance_force", 70.0);  // TODO
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
       CallbackReturn::SUCCESS;
@@ -55,6 +58,10 @@ CartesianImpedanceController::on_configure(
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
         CallbackReturn::ERROR;
   }
+  m_frame_topic_name =
+      get_node()->get_parameter("frame_topic_name").as_string();
+  m_wrench_topic_name =
+      get_node()->get_parameter("wrench_topic_name").as_string();
   // Set stiffness
   ctrl::Vector6D tmp;
   tmp[0] = get_node()->get_parameter("stiffness.trans_x").as_double();
@@ -75,7 +82,7 @@ CartesianImpedanceController::on_configure(
   tmp[5] = 2 * sqrt(tmp[5]);
 
   m_max_impendance_force =
-      get_node()->get_parameter("max_impedance_force").as_double(); // TODO
+      get_node()->get_parameter("max_impedance_force").as_double();  // TODO
   // Set nullspace stiffness
   m_null_space_stiffness =
       get_node()->get_parameter("nullspace_stiffness").as_double();
@@ -103,9 +110,9 @@ CartesianImpedanceController::on_configure(
       m_q_ns(i) = nullspace_config[i];
     }
     RCLCPP_INFO_STREAM(get_node()->get_logger(),
-    "Postural task stiffness: " << m_null_space_stiffness
-    << " for configuration: "
-    << m_q_ns.transpose());
+                       "Postural task stiffness: " << m_null_space_stiffness
+                                                   << " for configuration: "
+                                                   << m_q_ns.transpose());
   }
   m_compensate_dJdq = get_node()->get_parameter("compensate_dJdq").as_bool();
   RCLCPP_INFO(get_node()->get_logger(), "Compensate dJdq: %d",
@@ -120,7 +127,7 @@ CartesianImpedanceController::on_configure(
 
   m_target_wrench_subscriber =
       get_node()->create_subscription<geometry_msgs::msg::WrenchStamped>(
-          get_node()->get_name() + std::string("/target_wrench"), 10,
+          m_wrench_topic_name, 10,
           std::bind(&CartesianImpedanceController::targetWrenchCallback, this,
                     std::placeholders::_1));
 
@@ -133,7 +140,7 @@ CartesianImpedanceController::on_configure(
 
   m_target_frame_subscriber =
       get_node()->create_subscription<geometry_msgs::msg::PoseStamped>(
-          get_node()->get_name() + std::string("/target_frame"), 3,
+          m_frame_topic_name, 3,
           std::bind(&CartesianImpedanceController::targetFrameCallback, this,
                     std::placeholders::_1));
   m_data_publisher = get_node()->create_publisher<debug_msg::msg::Debug>(
@@ -182,9 +189,8 @@ CartesianImpedanceController::on_deactivate(
       CallbackReturn::SUCCESS;
 }
 
-controller_interface::return_type
-CartesianImpedanceController::update(const rclcpp::Time &time,
-                                     const rclcpp::Duration &period) {
+controller_interface::return_type CartesianImpedanceController::update(
+    const rclcpp::Time &time, const rclcpp::Duration &period) {
   // Update joint states
   Base::updateJointStates();
 
@@ -212,7 +218,7 @@ ctrl::Vector6D CartesianImpedanceController::computeMotionError() {
   // Use Rodrigues Vector for a compact representation of orientation errors
   // Only for angles within [0,Pi)
   KDL::Vector rot_axis = KDL::Vector::Zero();
-  double angle = error_kdl.M.GetRotAngle(rot_axis); // rot_axis is normalized
+  double angle = error_kdl.M.GetRotAngle(rot_axis);  // rot_axis is normalized
   double distance = error_kdl.p.Normalize();
 
   // Clamp maximal tolerated error.
@@ -411,7 +417,7 @@ void CartesianImpedanceController::targetFrameCallback(
                  KDL::Vector(target->pose.position.x, target->pose.position.y,
                              target->pose.position.z));
 }
-} // namespace cartesian_impedance_controller
+}  // namespace cartesian_impedance_controller
 
 // Pluginlib
 #include <pluginlib/class_list_macros.hpp>

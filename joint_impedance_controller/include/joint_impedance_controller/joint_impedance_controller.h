@@ -80,6 +80,7 @@ class JointImpedanceController
   rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr
       m_target_frame_subscriber;
   rclcpp::Publisher<debug_msg::msg::Debug>::SharedPtr m_data_publisher;
+  std::string m_frame_topic_name, m_wrench_topic_name;
   KDL::Frame m_target_frame;
   ctrl::Vector6D m_ft_sensor_wrench;
   std::string m_ft_sensor_ref_link;
