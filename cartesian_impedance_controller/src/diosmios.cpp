@@ -400,7 +400,7 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   }
 #endif
   
-double k_p = 1.0;
+double k_p = 0.8;
   // Compute the torque to achieve the desired force
   if (m_target_wrench.norm() > 0.1) {
     tau_ext = jac.transpose() * (m_target_wrench + k_p * (m_target_wrench + m_ft_sensor_wrench));

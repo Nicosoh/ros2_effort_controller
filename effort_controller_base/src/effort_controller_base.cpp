@@ -420,24 +420,34 @@ void EffortControllerBase::writeJointEffortCmds() {
       }
     }
   }
-  if (m_command_current_configuration_ == true) {
-    for (size_t i = 0; i < m_joint_number; ++i) {
-      m_joint_cmd_pos_handles[i].get().set_value(m_joint_positions(i));
-    }
-  }
+  // if (m_command_current_configuration_ == true) {
+  //   for (size_t i = 0; i < m_joint_number; ++i) {
+  //     m_joint_cmd_pos_handles[i].get().set_value(m_joint_positions(i));
+  //   }
+  // }
 }
 
 void EffortControllerBase::computeJointEffortCmds(const ctrl::VectorND &tau) {
   // Saturation of torque rate
   for (size_t i = 0; i < m_joint_number; i++) {
+    if (std::isnan(tau[i])) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "Computed torque for joint %s is NaN. Stopping controller.",
+                   m_joint_names[i].c_str());
+      std::terminate();
+    }
     const double difference = tau[i] - m_efforts[i];
+    if (std::abs(difference) > 10.0) {
+      RCLCPP_WARN(get_node()->get_logger(),
+                  "Joint %s effort large difference detected, was: %f, "
+                  "desired: %f, difference: %f. Shutting down controller.",
+                  m_joint_names[i].c_str(), m_efforts[i], tau[i], difference);
+      std::terminate();
+    }
+
     m_efforts[i] +=
         std::min(std::max(difference, -m_delta_tau_max), m_delta_tau_max);
-    if (std::abs(difference) > m_delta_tau_max) {
-      // RCLCPP_WARN(get_node()->get_logger(),
-      //             "Joint %s effort rate saturated, was: %f",
-      //             m_joint_names[i].c_str(), tau[i]);
-    }
+    
   }
 }
 
@@ -503,6 +513,40 @@ EffortControllerBase::displayInBaseLink(const ctrl::Matrix6D &tensor,
 
   return tmp;
 }
+/*
+ctrl::Matrix6D EffortControllerBase::displayInBaseLink(const ctrl::Matrix6D &tensor,
+                                                       const std::string &from) {
+  // Get transform from 'from' link to base
+  KDL::Frame T_kdl;
+  m_forward_kinematics_solver->JntToCart(m_joint_positions, T_kdl, from);
+
+  // Extract rotation and translation
+  ctrl::Matrix3D R;
+  R << T_kdl.M.data[0], T_kdl.M.data[1], T_kdl.M.data[2],
+       T_kdl.M.data[3], T_kdl.M.data[4], T_kdl.M.data[5],
+       T_kdl.M.data[6], T_kdl.M.data[7], T_kdl.M.data[8];
+
+  ctrl::Vector3D p(T_kdl.p.x(), T_kdl.p.y(), T_kdl.p.z());
+
+  // Skew-symmetric matrix of position vector
+  ctrl::Matrix3D p_skew;
+  p_skew << 0.0, -p.z(),  p.y(),
+            p.z(),  0.0, -p.x(),
+           -p.y(),  p.x(),  0.0;
+
+  // Build adjoint matrix
+  ctrl::Matrix6D Ad;
+  Ad.setZero();
+  Ad.topLeftCorner<3, 3>() = R;
+  Ad.bottomRightCorner<3, 3>() = R;
+  Ad.bottomLeftCorner<3, 3>() = p_skew * R;
+
+  // Apply full spatial transformation
+  ctrl::Matrix6D tensor_in_base =
+      Ad.transpose().inverse() * tensor * Ad.inverse();
+
+  return tensor_in_base;
+*/
 
 ctrl::Vector6D
 EffortControllerBase::displayInTipLink(const ctrl::Vector6D &vector,
@@ -528,12 +572,36 @@ EffortControllerBase::displayInTipLink(const ctrl::Vector6D &vector,
   return out;
 }
 
+ctrl::Matrix6D
+EffortControllerBase::displayInTipLink(const ctrl::Matrix6D &tensor,
+                                       const std::string &to) {
+  // Get rotation to base
+  KDL::Frame R_kdl;
+  m_forward_kinematics_solver->JntToCart(m_joint_positions, R_kdl, to);
+
+  // Adjust format
+  ctrl::Matrix3D R;
+  R << R_kdl.M.data[0], R_kdl.M.data[1], R_kdl.M.data[2], R_kdl.M.data[3],
+      R_kdl.M.data[4], R_kdl.M.data[5], R_kdl.M.data[6], R_kdl.M.data[7],
+      R_kdl.M.data[8];
+
+  // Treat diagonal blocks as individual 2nd rank tensors.
+  // Display in base frame.
+  ctrl::Matrix6D tmp = ctrl::Matrix6D::Zero();
+  tmp.topLeftCorner<3, 3>() = R.inverse() * tensor.topLeftCorner<3, 3>() * R.inverse().transpose();
+  tmp.bottomRightCorner<3, 3>() =
+      R.inverse() * tensor.bottomRightCorner<3, 3>() * R.inverse().transpose();
+
+  return tmp;
+}
+
 void EffortControllerBase::updateJointStates() {
   for (size_t i = 0; i < m_joint_number; ++i) {
     const auto &position_interface = m_joint_state_pos_handles[i].get();
     const auto &velocity_interface = m_joint_state_vel_handles[i].get();
 
     m_joint_positions(i) = position_interface.get_value();
+    // m_joint_velocities(i) = (m_dotq_alpha * velocity_interface.get_value() + (1 - m_dotq_alpha) * m_old_joint_velocities(i));
     m_joint_velocities(i) =
         std::round((m_dotq_alpha * velocity_interface.get_value() +
                     (1 - m_dotq_alpha) * m_old_joint_velocities(i)) *

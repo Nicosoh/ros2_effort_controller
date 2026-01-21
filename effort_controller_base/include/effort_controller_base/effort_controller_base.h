@@ -140,6 +140,9 @@ protected:
    */
   ctrl::Vector6D displayInTipLink(const ctrl::Vector6D &vector,
                                   const std::string &to);
+                              
+  ctrl::Matrix6D displayInTipLink(const ctrl::Matrix6D &tensor,
+                                  const std::string &to);
 
   void updateJointStates();
 
@@ -228,7 +231,7 @@ private:
   bool m_configured = {false};
   bool m_active = {false};
   // joint velocity filter
-  const double m_dotq_alpha = 0.3;
+  const double m_dotq_alpha = 0.95;
   // Dynamic parameters
   std::string m_robot_description;
 

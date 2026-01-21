@@ -10,6 +10,9 @@
 #include "effort_controller_base/Utility.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/wrench_stamped.hpp"
+
+#include "std_msgs/msg/float64_multi_array.hpp"
+
 #define DEBUG 0
 namespace gravity_compensation {
 
@@ -45,6 +48,8 @@ class GravityCompensation
   KDL::Frame m_ft_sensor_transform;
 
   ctrl::MatrixND m_identity;
+
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr m_data_impedance_publisher;
 };
 
 }  // namespace gravity_compensation {
