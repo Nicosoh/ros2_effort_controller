@@ -71,6 +71,8 @@ class CartesianImpedanceController
   double m_null_space_damping;
   double m_max_impendance_force;
   ctrl::Vector6D m_target_wrench;
+  rclcpp::Time m_last_time_target_wrench_received;
+  bool usable_force = false;
 
  private:
   ctrl::Vector6D compensateGravity();
@@ -97,6 +99,8 @@ class CartesianImpedanceController
   KDL::Frame m_target_frame;
   KDL::Frame m_target_frame_old;
   ctrl::Vector6D m_ft_sensor_wrench;
+  ctrl::Vector6D m_wrench_error;
+  ctrl::Vector6D m_wrench_error_dot;
   ctrl::Vector6D m_error_old;
   ctrl::Vector6D m_error_dot_old;
   ctrl::Vector6D m_error_dot_dot_old;
