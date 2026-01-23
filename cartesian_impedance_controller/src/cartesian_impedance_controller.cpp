@@ -30,6 +30,11 @@ CartesianImpedanceController::on_init() {
   auto_declare<double>("stiffness.rot_z", default_rot_stiff);
   auto_declare<double>("max_impedance_force", 70.0); // TODO
 
+  // Force control gains
+  auto_declare<double>("force_control.k_p", 1.0);
+  auto_declare<double>("force_control.k_d", 0.0);
+  auto_declare<double>("force_control.k_i", 0.0);
+
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
       CallbackReturn::SUCCESS;
 }
@@ -55,6 +60,11 @@ CartesianImpedanceController::on_configure(
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
         CallbackReturn::ERROR;
   }
+  // Force control gains
+  m_k_p = get_node()->get_parameter("force_control.k_p").as_double();
+  m_k_d = get_node()->get_parameter("force_control.k_d").as_double();
+  m_k_i = get_node()->get_parameter("force_control.k_i").as_double();
+
   // Set stiffness
   ctrl::Vector6D tmp;
   tmp[0] = get_node()->get_parameter("stiffness.trans_x").as_double();
@@ -404,30 +414,30 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   }
 #endif
   
-double k_p = 0.8;
-double k_d = 0.005;
+
   // Compute the torque to achieve the desired force
-  if (m_target_wrench.norm() > 0.1 && usable_force) {
+  if (m_target_wrench.norm() > 0.01 && usable_force) {
     ctrl::Matrix6D direction_selector = ctrl::Matrix6D::Zero();
     direction_selector(2,2) = 1.0;
-    ctrl::Vector6D selected_force = direction_selector * (m_target_wrench + k_p * m_wrench_error + k_d * m_wrench_error_dot);
+    ctrl::Vector6D selected_force = direction_selector * (m_target_wrench + m_k_p * m_wrench_error + 
+      m_k_d * m_wrench_error_dot + m_k_i * m_wrench_error_integral);
     auto F_b =  Base::displayInBaseLink(selected_force, m_end_effector_link); 
     tau_ext = jac.transpose() * F_b;
-    RCLCPP_INFO_STREAM_THROTTLE(
-        get_node()->get_logger(), *get_node()->get_clock(), 5000,
-        "External wrench desired: \n"
-            << m_target_wrench << "\n"
-            << "Measured wrench: \n"
-            << m_ft_sensor_wrench << "\n" <<
-            "Torque ext: \n"
-            << selected_force.transpose() << "\n" <<
-            "Feedforward target wrench: \n" <<
-            F_b.transpose() << "\n"
-      );
+    // RCLCPP_INFO_STREAM_THROTTLE(
+    //     get_node()->get_logger(), *get_node()->get_clock(), 5000,
+    //     "External wrench desired: \n"
+    //         << m_target_wrench << "\n"
+    //         << "Measured wrench: \n"
+    //         << m_ft_sensor_wrench << "\n" <<
+    //         "Torque ext: \n"
+    //         << selected_force.transpose() << "\n" <<
+    //         "Feedforward target wrench: \n" <<
+    //         F_b.transpose() << "\n"
+    //   );
     static std_msgs::msg::Float64MultiArray impedance_message;
-    impedance_message.data = {m_wrench_error(2), m_wrench_error_dot(2), selected_force(2)};
+    impedance_message.data = {m_k_p * m_wrench_error(2), m_wrench_error_dot(2), selected_force(2), m_k_i * m_wrench_error_integral(2)};
     m_data_impedance_publisher->publish(impedance_message);
-    tau_ext = ctrl::VectorND::Zero(Base::m_joint_number);  
+    // tau_ext = ctrl::VectorND::Zero(Base::m_joint_number);  
   }
   else {
     tau_ext = ctrl::VectorND::Zero(Base::m_joint_number);
@@ -460,13 +470,39 @@ void CartesianImpedanceController::targetWrenchCallback(
   if (last_update > 0.0012) {
     usable_force = false;
     m_wrench_error = m_target_wrench + m_ft_sensor_wrench;
-    m_wrench_error_dot = ctrl::Vector6D::Zero();
+    // m_wrench_error_dot = ctrl::Vector6D::Zero();
   }
   else {
     usable_force = true;
     auto wrench_error_old = m_wrench_error;
-    m_wrench_error = 0.9 * m_wrench_error + 0.1 * (m_target_wrench + m_ft_sensor_wrench);
+    auto old_wrench_error_dot = m_wrench_error_dot;
+    m_wrench_error = 0.88 * m_wrench_error + 0.12 * (m_target_wrench + m_ft_sensor_wrench);
     m_wrench_error_dot = 0.95 * m_wrench_error_dot + 0.05 * (m_wrench_error - wrench_error_old)/0.001;
+    m_wrench_error_integral = m_wrench_error_integral + m_wrench_error * 0.001;
+
+    // anti wind-up
+    double integral_limit = 3.0;
+    for (int i = 0; i < 6; i++) {
+      if (m_wrench_error_integral(i) > integral_limit) {
+        m_wrench_error_integral(i) = integral_limit;
+      }
+      else if (m_wrench_error_integral(i) < -integral_limit) {
+        m_wrench_error_integral(i) = -integral_limit;
+      }
+    }
+
+    // Max difference between old and new wrench error dot
+    double max_wrench_error_dot = 1.0; // [N/s]
+    for (int i = 0; i < 6; i++) {
+      if (m_wrench_error_dot(i) - old_wrench_error_dot(i) > max_wrench_error_dot) {
+        m_wrench_error_dot(i) = old_wrench_error_dot(i) + max_wrench_error_dot;
+      }
+      else if (m_wrench_error_dot(i) - old_wrench_error_dot(i) < -max_wrench_error_dot) {
+        m_wrench_error_dot(i) = old_wrench_error_dot(i) - max_wrench_error_dot;
+      } 
+    }
+
+
   }
 
   m_last_time_target_wrench_received = get_node()->now();

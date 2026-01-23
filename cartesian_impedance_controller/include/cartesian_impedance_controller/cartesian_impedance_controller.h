@@ -101,11 +101,17 @@ class CartesianImpedanceController
   ctrl::Vector6D m_ft_sensor_wrench;
   ctrl::Vector6D m_wrench_error;
   ctrl::Vector6D m_wrench_error_dot;
+  ctrl::Vector6D m_wrench_error_integral;
   ctrl::Vector6D m_error_old;
   ctrl::Vector6D m_error_dot_old;
   ctrl::Vector6D m_error_dot_dot_old;
   std::string m_ft_sensor_ref_link;
   KDL::Frame m_ft_sensor_transform;
+
+  // Force control gains
+  double m_k_p;
+  double m_k_d;
+  double m_k_i;
 
   KDL::JntArray m_null_space;
   KDL::Frame m_current_frame;
