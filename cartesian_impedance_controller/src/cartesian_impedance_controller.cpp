@@ -91,34 +91,7 @@ CartesianImpedanceController::on_configure(
   // Set nullspace stiffness
   m_null_space_stiffness =
       get_node()->get_parameter("nullspace_stiffness").as_double();
-  if (m_null_space_stiffness > 0.0) {
-    // Set nullspace configuration
-    std::vector<double> nullspace_config =
-        get_node()
-            ->get_parameter("nullspace_desired_configuration")
-            .as_double_array();
-    if (nullspace_config.empty()) {
-      RCLCPP_WARN(
-          get_node()->get_logger(),
-          "Null space configuration is empty, zeroing null space stiffness");
-      m_null_space_stiffness = 0.0;
-    } else if (nullspace_config.size() != Base::m_joint_number) {
-      RCLCPP_ERROR(get_node()->get_logger(),
-                   "Null space configuration size does not match joint number: "
-                   "%zu != %zu",
-                   nullspace_config.size(), Base::m_joint_number);
-      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
-          CallbackReturn::ERROR;
-    }
-    m_q_ns = ctrl::VectorND::Zero(Base::m_joint_number);
-    for (size_t i = 0; i < Base::m_joint_number; ++i) {
-      m_q_ns(i) = nullspace_config[i];
-    }
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),
-    "Postural task stiffness: " << m_null_space_stiffness
-    << " for configuration: "
-    << m_q_ns.transpose());
-  }
+  
   m_compensate_dJdq = get_node()->get_parameter("compensate_dJdq").as_bool();
   RCLCPP_INFO(get_node()->get_logger(), "Compensate dJdq: %d",
               m_compensate_dJdq);
@@ -193,6 +166,37 @@ CartesianImpedanceController::on_activate(
   m_wrench_error_dot = ctrl::Vector6D::Zero();
 
   m_last_time_target_wrench_received = get_node()->now();
+
+  if (m_null_space_stiffness > 0.0) {
+    // Set nullspace configuration
+    std::vector<double> nullspace_config =
+        get_node()
+            ->get_parameter("nullspace_desired_configuration")
+            .as_double_array();
+    if (nullspace_config.empty()) {
+      RCLCPP_WARN(
+          get_node()->get_logger(),
+          "Null space configuration is empty, taking current joint positions");
+      for(size_t i = 0; i < Base::m_joint_number; ++i) {
+        nullspace_config.push_back(Base::m_joint_positions(i));
+      }
+    } else if (nullspace_config.size() != Base::m_joint_number) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "Null space configuration size does not match joint number: "
+                   "%zu != %zu",
+                   nullspace_config.size(), Base::m_joint_number);
+      return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
+          CallbackReturn::ERROR;
+    }
+    m_q_ns = ctrl::VectorND::Zero(Base::m_joint_number);
+    for (size_t i = 0; i < Base::m_joint_number; ++i) {
+      m_q_ns(i) = nullspace_config[i];
+    }
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),
+    "Postural task stiffness: " << m_null_space_stiffness
+    << " for configuration: "
+    << m_q_ns.transpose());
+  }
 #if LOGGING
   m_logger = XBot::MatLogger2::MakeLogger("/tmp/cart_impedance_log");
   m_logger->set_buffer_mode(XBot::VariableBuffer::Mode::circular_buffer);
@@ -414,7 +418,15 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   }
 #endif
   
-
+  auto compute_condition_number = [](const Eigen::MatrixXd &matrix) {
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(matrix);
+    Eigen::VectorXd singular_values = svd.singularValues();
+    return singular_values(0) / singular_values(singular_values.size() - 1);
+  };
+  RCLCPP_INFO_STREAM_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 5000,"condition_number mass: "<<compute_condition_number(M.data));
+  RCLCPP_INFO_STREAM_THROTTLE(
+        get_node()->get_logger(), *get_node()->get_clock(), 5000,"condition_number jac: "<<compute_condition_number(jac));
   // Compute the torque to achieve the desired force
   if (m_target_wrench.norm() > 0.01 && usable_force) {
     ctrl::Matrix6D direction_selector = ctrl::Matrix6D::Zero();
