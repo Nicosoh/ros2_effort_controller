@@ -437,7 +437,7 @@ void EffortControllerBase::computeJointEffortCmds(const ctrl::VectorND &tau) {
       std::terminate();
     }
     const double difference = tau[i] - m_efforts[i];
-    if (std::abs(difference) > 10.0) {
+    if (std::abs(difference) > 8.0) {
       RCLCPP_WARN(get_node()->get_logger(),
                   "Joint %s effort large difference detected, was: %f, "
                   "desired: %f, difference: %f. Shutting down controller.",
