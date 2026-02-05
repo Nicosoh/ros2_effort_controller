@@ -328,7 +328,11 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   // Joint states in Eigen
   ctrl::VectorND q = Base::m_joint_positions.data;
   ctrl::VectorND q_dot = Base::m_joint_velocities.data;
-
+  
+  // Print joint positions
+  RCLCPP_INFO_STREAM_THROTTLE(
+      get_node()->get_logger(), *get_node()->get_clock(), 5000,
+      "Joint positions: " << q.transpose() << "\n");
   // FK (used by your motion error + gravity compensation in FT callback)
   Base::m_fk_solver->JntToCart(Base::m_joint_positions, m_current_frame);
 
@@ -374,14 +378,20 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   tau_null.setZero();
   tau_ext.setZero();
 
+  ctrl::Matrix6D selection_matrix = ctrl::Matrix6D::Identity();
+  // selection_matrix(2, 2) = 0.0;  // No Z translation impedance
+
+  // Rotate selection matrix in the base frame
+  selection_matrix = Base::displayInBaseLink(
+      selection_matrix, Base::m_end_effector_link);
   // Stiffness/damping in base link
-  const auto base_link_stiffness =
+  ctrl::Matrix6D base_link_stiffness =
       Base::displayInBaseLink(m_cartesian_stiffness, Base::m_end_effector_link);
 
-  ctrl::Matrix6D K_d = base_link_stiffness;
+  ctrl::Matrix6D K_d = selection_matrix * base_link_stiffness;
 
   // Your damping shaping (kept)
-  ctrl::Matrix6D D_d = compute_correct_damping(Lambda, K_d, std::sqrt(2.0) / 2.0);
+  ctrl::Matrix6D D_d = selection_matrix * compute_correct_damping(Lambda, base_link_stiffness, std::sqrt(2.0) / 2.0);
 
   // Task-space impedance torque
   ctrl::VectorND stiffness_torque = jac.transpose() * (K_d * motion_error);
