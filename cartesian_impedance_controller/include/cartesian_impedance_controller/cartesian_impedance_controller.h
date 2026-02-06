@@ -67,6 +67,7 @@ class CartesianImpedanceController
   ctrl::Vector6D m_target_wrench;
   ctrl::MatrixND m_jacobian;
   ctrl::MatrixND m_mass_matrix;
+  double m_period_sec{0.001};
 
   rclcpp::Time m_last_time_target_wrench_received;
   bool usable_force{false};
@@ -91,6 +92,12 @@ class CartesianImpedanceController
 
   void targetFrameCallback(
       const geometry_msgs::msg::PoseStamped::SharedPtr target);
+
+  Eigen::Matrix<double,7,1> computeGradForceCapabilityToolZ_FD(
+    const KDL::JntArray& q_current,
+    double delta);
+
+  double computeForceCapabilityToolZ_fromKDL(double eps);
 
   ctrl::Vector6D computeMotionError();
 
@@ -127,6 +134,9 @@ class CartesianImpedanceController
 
   std::string m_ft_sensor_ref_link;
   KDL::Frame m_ft_sensor_transform;
+  Eigen::Matrix<double,7,1> q_ref_, dq_ref_, grad_filt_;
+  int grad_counter_ = 0;
+
 
   // Force control gains
   double m_k_p{0.0};

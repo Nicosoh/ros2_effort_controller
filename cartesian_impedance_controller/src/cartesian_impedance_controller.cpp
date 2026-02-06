@@ -5,6 +5,8 @@
 
 namespace cartesian_impedance_controller {
 
+
+
 CartesianImpedanceController::CartesianImpedanceController()
     : Base::EffortControllerBase(), m_hand_frame_control(true) {}
 
@@ -208,6 +210,11 @@ CartesianImpedanceController::on_activate(const rclcpp_lifecycle::State& previou
 
   m_last_time_target_wrench_received = get_node()->now();
 
+  q_ref_ = Base::m_joint_positions.data;            // stato corrente
+  dq_ref_.setZero();
+  grad_filt_.setZero();
+  grad_counter_ = 0;
+
   // Optional: initialise buffers with Franka model outputs
   {
     const std::array<double, 49> mass_array = franka_robot_model_->getMassMatrix();
@@ -283,7 +290,7 @@ controller_interface::return_type
 CartesianImpedanceController::update(const rclcpp::Time& time, const rclcpp::Duration& period) {
   (void)time;
   (void)period;
-
+  m_period_sec = period.seconds();
   // Update joint states (keep your current method)
   Base::updateJointStates();
 
@@ -330,11 +337,12 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   ctrl::VectorND q_dot = Base::m_joint_velocities.data;
   
   // Print joint positions
-  RCLCPP_INFO_STREAM_THROTTLE(
-      get_node()->get_logger(), *get_node()->get_clock(), 5000,
-      "Joint positions: " << q.transpose() << "\n");
+  // RCLCPP_INFO_STREAM_THROTTLE(
+  //     get_node()->get_logger(), *get_node()->get_clock(), 5000,
+  //     "Joint positions: " << q.transpose() << "\n");
   // FK (used by your motion error + gravity compensation in FT callback)
   Base::m_fk_solver->JntToCart(Base::m_joint_positions, m_current_frame);
+  Base::m_jnt_to_jac_solver->JntToJac(Base::m_joint_positions, Base::m_jacobian);
 
   // ---------------- Franka model: Jacobian and Mass matrix ----------------
   // Jacobian of EE expressed in base frame (6x7)
@@ -379,8 +387,72 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   tau_ext.setZero();
 
   ctrl::Matrix6D selection_matrix = ctrl::Matrix6D::Identity();
-  // selection_matrix(2, 2) = 0.0;  // No Z translation impedance
+  selection_matrix(2, 2) = 0.0;  // No Z translation impedance
+  // jac: 6x7 Jacobian (tool or EE). M: 7x7 mass matrix.
+  // q, q_dot are 7x1.
 
+  ctrl::MatrixND J_pinv;  
+  pseudoInverse(jac, &J_pinv);
+
+  // ---- Dynamic-consistent nullspace projector in torque space ----
+  // N_tau = I - J^T * Lambda * J * M^{-1}
+  ctrl::MatrixND N_tau =
+      m_identity - jac.transpose() * Lambda * jac * M.inverse();
+
+  // ---- (Optional but useful) velocity-level nullspace projector ----
+  // N_v = I - J^+ J
+  ctrl::MatrixND N_v =
+      m_identity - J_pinv * jac;
+
+  // =====================
+  // Joint reference update in nullspace (each cycle)
+  // =====================
+
+  // dt from your period:
+  const double dt = std::clamp(m_period_sec, 1e-4, 5e-3);
+
+  const int grad_update_every = 10;
+  const double delta = 1e-4;
+  const double alpha = 0.05;
+  const double k_m = 1.4;      // tune
+  const double grad_clip = 25.0;
+  const double dq0_max = 0.3;  // tune
+  const double Kq = 35.0;
+  const double Dq = 2 * sqrt(Kq);
+
+  // ---- gradient update ----
+  if (++grad_counter_ % grad_update_every == 0) {
+    Eigen::Matrix<double,7,1> grad =
+        computeGradForceCapabilityToolZ_FD(Base::m_joint_positions, delta);
+
+    for (int i = 0; i < 7; ++i) {
+      grad(i) = std::clamp(grad(i), -grad_clip, grad_clip);
+    }
+    grad_filt_ = (1.0 - alpha) * grad_filt_ + alpha * grad;
+  }
+
+  // dq0 = k_m * grad
+  ctrl::VectorND dq0 = ctrl::VectorND::Zero(Base::m_joint_number);
+  for (int i = 0; i < 7; ++i) dq0(i) = k_m * grad_filt_(i);
+
+  // clamp dq0
+  for (int i = 0; i < 7; ++i) dq0(i) = std::clamp(dq0(i), -dq0_max, dq0_max);
+
+  // project + integrate
+  dq_ref_ = N_v * dq0;
+  q_ref_ += dq_ref_ * dt;
+
+  // PD torque in joint space
+  ctrl::VectorND tau_jref =
+      Kq * (q_ref_ - q) + Dq * (dq_ref_ - q_dot);
+  // RCLCPP_INFO_STREAM_THROTTLE(
+  //     get_node()->get_logger(), *get_node()->get_clock(), 5000,
+  //     "q_ref: " << q_ref_.transpose() << "\n"
+  //                << "dq_ref: " << dq_ref_.transpose() << "\n" <<
+  //     "q" << q.transpose() << "\n"
+  //                << "q_dot: " << q_dot.transpose() << "\n");
+  // project torque into dynamic nullspace
+  ctrl::VectorND tau_null_ref = N_tau * tau_jref;
   // Rotate selection matrix in the base frame
   selection_matrix = Base::displayInBaseLink(
       selection_matrix, Base::m_end_effector_link);
@@ -484,13 +556,13 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
         get_node()->get_logger(), *get_node()->get_clock(), 5000,
         "High condition number of the Jacobian: " << compute_condition_number(jac));
   }
-
+  ctrl::Vector6D selected_force = ctrl::Vector6D::Zero();
   // External wrench tracking -> torque (kept)
   if (m_target_wrench.norm() > 0.00001) {
     ctrl::Matrix6D direction_selector = ctrl::Matrix6D::Zero();
     direction_selector(2, 2) = 1.0;
 
-    ctrl::Vector6D selected_force =
+    selected_force =
         direction_selector *
         (m_target_wrench + m_k_p * m_wrench_error + m_k_d * m_wrench_error_dot +
          m_k_i * m_wrench_error_integral);
@@ -501,13 +573,84 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
     tau_ext = ctrl::VectorND::Zero(Base::m_joint_number);
   }
 
+  const double tau_ns_max = 5.0; // Nm (start small)
+  for (int i=0;i<7;i++) tau_null_ref(i) = std::clamp(tau_null_ref(i), -tau_ns_max, tau_ns_max);
+
   // Sum torques
-  tau += tau_task + tau_null + tau_ext;
+  tau += tau_task + tau_null_ref + tau_ext;
 
   // Publish error (kept)
+  // ================= SANITY CHECK PRINTS =================
+  // ----- 1) Velocity nullspace leakage: J * dq_ref -----
+  Eigen::VectorXd xdot_leak = jac * dq_ref_;
+  double leak_vel = xdot_leak.norm();
+
+  // Compare before projection
+  Eigen::VectorXd xdot_before = jac * dq0;
+  double leak_before = xdot_before.norm();
+
+  // ----- 2) Torque nullspace leakage: J * M^{-1} * tau_null -----
+  Eigen::VectorXd xdd_leak = jac * M.inverse() * tau_null_ref;
+  double leak_tau = xdd_leak.norm();
+
+  // ----- 3) Projector idempotence: N_tau^2 ≈ N_tau -----
+  // Eigen::MatrixXd N_tau =
+  //     m_identity - jac.transpose() * Lambda * jac * M.inverse();
+
+  double proj_err = (N_tau * N_tau - N_tau).norm();
+
+  // ----- 4) Objective directional derivative -----
+  double wdot_pred = grad_filt_.dot(dq_ref_);
+
+  // ----- 5) Pose error norm -----
+  double pose_err = motion_error.norm();
+  
+  // double w_now = computeGradForceCapabilityToolZ_FD(Base::m_joint_positions);
+  // ----- PRINT -----
+  // RCLCPP_INFO_STREAM(
+  //     get_node()->get_logger(),
+  //     "\n=== NULLSPACE SANITY ===\n"
+  //     << "w(q):               " << w_now << "\n"
+  //     << "||J*dq0||:          " << leak_before << "\n"
+  //     << "||J*dq_ref||:       " << leak_vel << "\n"
+  //     << "||J*M^-1*tau_null||:" << leak_tau << "\n"
+  //     << "proj_err:           " << proj_err << "\n"
+  //     << "grad·dq_ref:        " << wdot_pred << "\n"
+  //     << "||pose_error||:     " << pose_err << "\n");
+
+
   static std_msgs::msg::Float64MultiArray impedance_message;
-  impedance_message.data = {motion_error(0), motion_error(1), motion_error(2),
-                            motion_error(3), motion_error(4), motion_error(5)};
+  impedance_message.data = {
+    // w_now,
+    // leak_before,
+    // leak_vel,
+    // leak_tau,
+    // proj_err,
+    // wdot_pred,
+    // pose_err, 
+    tau_task(0),
+    tau_task(1),
+    tau_task(2),
+    tau_task(3),
+    tau_task(4),
+    tau_task(5),
+    tau_task(6),
+    tau_ext(0),
+    tau_ext(1),
+    tau_ext(2),
+    tau_ext(3),
+    tau_ext(4),
+    tau_ext(5),
+    tau_ext(6),
+    tau_null_ref(0),
+    tau_null_ref(1),
+    tau_null_ref(2),
+    tau_null_ref(3),
+    tau_null_ref(4),
+    tau_null_ref(5),
+    tau_null_ref(6),
+    selected_force(2)
+  };
   m_data_impedance_publisher->publish(impedance_message);
 
   return tau;
@@ -546,7 +689,7 @@ void CartesianImpedanceController::targetWrenchCallback(
     m_wrench_error_integral = m_wrench_error_integral + m_wrench_error * 0.001;
 
     // anti wind-up
-    double integral_limit = 3.0;
+    double integral_limit = 6.0;
     for (int i = 0; i < 6; i++) {
       if (m_wrench_error_integral(i) > integral_limit) {
         m_wrench_error_integral(i) = integral_limit;
@@ -636,6 +779,90 @@ void CartesianImpedanceController::targetFrameCallback(
   m_last_time_target_frame_received = get_node()->now();
 }
 
+double CartesianImpedanceController::computeForceCapabilityToolZ_fromKDL(double eps = 1e-8)
+{
+  // Jv from KDL Jacobian (6x7 -> top 3 rows)
+  Eigen::Matrix<double,3,7> Jv;
+  for (int c = 0; c < 7; ++c) {
+    Jv(0,c) = Base::m_jacobian(0,c);
+    Jv(1,c) = Base::m_jacobian(1,c);
+    Jv(2,c) = Base::m_jacobian(2,c);
+  }
+
+  Eigen::Matrix3d A = Jv * Jv.transpose();
+  A += eps * Eigen::Matrix3d::Identity();
+
+  // tool z axis in base: d_base = R_base_tool * e_z
+  KDL::Vector ez(0.0, 0.0, 1.0);
+  KDL::Vector d_kdl = m_current_frame.M * ez;
+
+  Eigen::Vector3d d_base(d_kdl.x(), d_kdl.y(), d_kdl.z());
+
+  double denom = (d_base.transpose() * A.inverse() * d_base)(0,0);
+  denom = std::max(denom, 1e-12);
+  return 1.0 / std::sqrt(denom);
+}
+
+Eigen::Matrix<double,7,1> CartesianImpedanceController::computeGradForceCapabilityToolZ_FD(
+    const KDL::JntArray& q_current,
+    double delta = 1e-4)
+{
+  Eigen::Matrix<double,7,1> grad;
+  grad.setZero();
+
+  // We'll reuse local temp containers
+  KDL::JntArray q_p = q_current;
+  KDL::JntArray q_m = q_current;
+
+  KDL::Frame frame_tmp;
+  KDL::Jacobian jac_tmp(7);
+
+  auto eval_w_at = [&](const KDL::JntArray& q_test) -> double {
+    // FK
+    Base::m_fk_solver->JntToCart(q_test, frame_tmp);
+
+    // Jacobian
+    Base::m_jnt_to_jac_solver->JntToJac(q_test, jac_tmp);
+
+    // Convert jac_tmp into Base::m_jacobian-like access by temporary assignment
+    // (or compute directly from jac_tmp)
+    // Here compute directly:
+
+    Eigen::Matrix<double,3,7> Jv;
+    for (int c = 0; c < 7; ++c) {
+      Jv(0,c) = jac_tmp(0,c);
+      Jv(1,c) = jac_tmp(1,c);
+      Jv(2,c) = jac_tmp(2,c);
+    }
+
+    Eigen::Matrix3d A = Jv * Jv.transpose();
+    const double eps = 1e-8;
+    A += eps * Eigen::Matrix3d::Identity();
+
+    KDL::Vector ez(0.0, 0.0, 1.0);
+    KDL::Vector d_kdl = frame_tmp.M * ez;
+    Eigen::Vector3d d_base(d_kdl.x(), d_kdl.y(), d_kdl.z());
+
+    double denom = (d_base.transpose() * A.inverse() * d_base)(0,0);
+    denom = std::max(denom, 1e-12);
+    return 1.0 / std::sqrt(denom);
+  };
+
+  for (int i = 0; i < 7; ++i) {
+    q_p = q_current;
+    q_m = q_current;
+
+    q_p(i) += delta;
+    q_m(i) -= delta;
+
+    const double wp = eval_w_at(q_p);
+    const double wm = eval_w_at(q_m);
+
+    grad(i) = (wp - wm) / (2.0 * delta);
+  }
+
+  return grad;
+}
 
 }  // namespace cartesian_impedance_controller
 
