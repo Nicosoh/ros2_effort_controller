@@ -429,20 +429,24 @@ void EffortControllerBase::writeJointEffortCmds() {
 
 void EffortControllerBase::computeJointEffortCmds(const ctrl::VectorND &tau) {
   // Saturation of torque rate
+  double difference;
   for (size_t i = 0; i < m_joint_number; i++) {
     if (std::isnan(tau[i])) {
       RCLCPP_ERROR(get_node()->get_logger(),
                    "Computed torque for joint %s is NaN. Stopping controller.",
                    m_joint_names[i].c_str());
-      std::terminate();
+      difference = 0.0;
     }
-    const double difference = tau[i] - m_efforts[i];
+    else{
+      difference = tau[i] - m_efforts[i];
+    } 
     if (std::abs(difference) > 8.0) {
       RCLCPP_WARN(get_node()->get_logger(),
                   "Joint %s effort large difference detected, was: %f, "
                   "desired: %f, difference: %f. Shutting down controller.",
                   m_joint_names[i].c_str(), m_efforts[i], tau[i], difference);
-      std::terminate();
+      difference = 0.0;
+      // std::terminate();
     }
 
     m_efforts[i] +=

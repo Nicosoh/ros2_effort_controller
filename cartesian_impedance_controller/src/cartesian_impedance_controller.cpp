@@ -415,7 +415,7 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   const double delta = 1e-4;
   const double alpha = 0.05;
   const double k_m = 1.4;      // tune
-  const double grad_clip = 25.0;
+  const double grad_clip = 5.0;
   const double dq0_max = 0.3;  // tune
   const double Kq = 35.0;
   const double Dq = 2 * sqrt(Kq);
@@ -573,7 +573,7 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
     tau_ext = ctrl::VectorND::Zero(Base::m_joint_number);
   }
 
-  const double tau_ns_max = 5.0; // Nm (start small)
+  const double tau_ns_max = 7.0; // Nm (start small)
   for (int i=0;i<7;i++) tau_null_ref(i) = std::clamp(tau_null_ref(i), -tau_ns_max, tau_ns_max);
 
   // Sum torques
