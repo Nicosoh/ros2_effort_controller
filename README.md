@@ -52,3 +52,18 @@ For now a cartesian impedance controller, a joint impedance controller and a gra
 Check out their use in the KUKA LBR example [here](https://github.com/idra-lab/kuka_impedance)!  
 
 The structure of the code and some libraries have been taken from the repo [Cartesian Controllers](https://github.com/fzi-forschungszentrum-informatik/cartesian_controllers).
+
+## Citation
+If you use these controllers, please consider citing our work and leaving us a star to support the project. :mechanical_arm: 🫶
+```
+@article{nardi2026anatomy,
+  author={Nardi, Davide and Lamon, Edoardo and Fontanelli, Daniele and Saveriano, Matteo and Palopoli, Luigi},
+  journal={IEEE Robotics and Automation Letters}, 
+  title={An Anatomy-Aware Shared Control Approach for Assisted Teleoperation of Lung Ultrasound Examinations}, 
+  year={2026},
+  volume={11},
+  number={3},
+  pages={2570-2577},
+  keywords={Robots;Ribs;Probes;Ultrasonic imaging;Skin;Solid modeling;Computational modeling;Three-dimensional displays;Biological system modeling;Cameras;Medical robots and systems;physical human-robot interaction;telerobotics and teleoperation},
+  doi={10.1109/LRA.2026.3653292}}
+```
