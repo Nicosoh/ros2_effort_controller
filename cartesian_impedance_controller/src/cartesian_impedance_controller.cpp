@@ -417,7 +417,7 @@ ctrl::VectorND CartesianImpedanceController::computeTorque() {
   const double k_m = 1.4;      // tune
   const double grad_clip = 5.0;
   const double dq0_max = 0.3;  // tune
-  const double Kq = 35.0;
+  const double Kq = 15.0;
   const double Dq = 2 * sqrt(Kq);
 
   // ---- gradient update ----
@@ -689,7 +689,7 @@ void CartesianImpedanceController::targetWrenchCallback(
     m_wrench_error_integral = m_wrench_error_integral + m_wrench_error * 0.001;
 
     // anti wind-up
-    double integral_limit = 6.0;
+    double integral_limit = 9.0;
     for (int i = 0; i < 6; i++) {
       if (m_wrench_error_integral(i) > integral_limit) {
         m_wrench_error_integral(i) = integral_limit;
