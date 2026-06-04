@@ -420,11 +420,11 @@ void EffortControllerBase::writeJointEffortCmds() {
       }
     }
   }
-  // if (m_command_current_configuration_ == true) {
-  //   for (size_t i = 0; i < m_joint_number; ++i) {
-  //     m_joint_cmd_pos_handles[i].get().set_value(m_joint_positions(i));
-  //   }
-  // }
+  if (m_command_current_configuration_ == true) {
+    for (size_t i = 0; i < m_joint_number; ++i) {
+      m_joint_cmd_pos_handles[i].get().set_value(m_joint_positions(i));
+    }
+  }
 }
 
 void EffortControllerBase::computeJointEffortCmds(const ctrl::VectorND &tau) {
