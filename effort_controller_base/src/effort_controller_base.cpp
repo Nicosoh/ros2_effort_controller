@@ -2,8 +2,10 @@
 
 namespace effort_controller_base {
 
+// Constructor
 EffortControllerBase::EffortControllerBase() {}
 
+// Subscriber
 RobotDescriptionListener::RobotDescriptionListener(
     std::shared_ptr<std::string> robot_description_ptr,
     const std::string &topic_name)
@@ -19,6 +21,8 @@ RobotDescriptionListener::RobotDescriptionListener(
   };
 
   // set to qos to be RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL
+  // This sets the QoS to "transient local," meaning the subscriber
+  // can get the message even if it was published before the subscriber existed
   auto durability_policy = rmw_qos_profile_default;
   durability_policy.durability = RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL;
   auto qos = rclcpp::QoS(rclcpp::KeepAll(), durability_policy);
@@ -297,7 +301,7 @@ EffortControllerBase::on_configure(
   }
   m_configured = true;
 
-  // Initialize effords to null
+  // Initialize efforts to null
   m_efforts = ctrl::VectorND::Zero(m_joint_number);
 
   // Initialize joint state
@@ -430,19 +434,21 @@ void EffortControllerBase::writeJointEffortCmds() {
 void EffortControllerBase::computeJointEffortCmds(const ctrl::VectorND &tau) {
   // Saturation of torque rate
   for (size_t i = 0; i < m_joint_number; i++) {
-    if (std::isnan(tau[i])) {
+    if (!std::isfinite(tau[i])) {
       RCLCPP_ERROR(get_node()->get_logger(),
-                   "Computed torque for joint %s is NaN. Stopping controller.",
+                   "Computed torque for joint %s is not finite. Keeping "
+                   "previous effort command.",
                    m_joint_names[i].c_str());
-      std::terminate();
+      continue;
     }
     const double difference = tau[i] - m_efforts[i];
     if (std::abs(difference) > 10.0) {
-      RCLCPP_WARN(get_node()->get_logger(),
+      RCLCPP_WARN_THROTTLE(get_node()->get_logger(), *get_node()->get_clock(),
+                           1000,
                   "Joint %s effort large difference detected, was: %f, "
-                  "desired: %f, difference: %f. Shutting down controller.",
-                  m_joint_names[i].c_str(), m_efforts[i], tau[i], difference);
-      std::terminate();
+                  "desired: %f, difference: %f. Limiting step to %f Nm.",
+                  m_joint_names[i].c_str(), m_efforts[i], tau[i], difference,
+                  m_delta_tau_max);
     }
 
     m_efforts[i] +=

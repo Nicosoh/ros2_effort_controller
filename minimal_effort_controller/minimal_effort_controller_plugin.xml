@@ -1,0 +1,9 @@
+<library path="minimal_effort_controller">
+  <class name="minimal_effort_controller/MinimalEffortController"
+    type="minimal_effort_controller::MinimalEffortController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>
+      The MinimalEffortController which passes through torque commands computed by an external MPC node.
+    </description>
+  </class>
+</library>
