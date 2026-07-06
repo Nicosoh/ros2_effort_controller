@@ -133,9 +133,9 @@ EffortControllerBase::on_configure(
                                                    << m_compensate_coriolis);
   // // Get delta tau maximum
   m_delta_tau_max = get_node()->get_parameter("delta_tau_max").as_double();
-  if (m_delta_tau_max < 1.0) {
+  if (m_delta_tau_max < 0.1) {
     RCLCPP_ERROR(get_node()->get_logger(),
-                 "delta_tau_max must be greater than 1.0 Nm");
+                 "delta_tau_max must be greater than 0.1 Nm");
     return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
         CallbackReturn::ERROR;
   }

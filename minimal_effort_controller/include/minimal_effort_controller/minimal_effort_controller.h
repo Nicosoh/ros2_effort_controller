@@ -92,6 +92,10 @@ class MinimalEffortController
   ctrl::MatrixND m_identity;
   ctrl::VectorND m_q_starting_pose;
   ctrl::VectorND m_tau_old;
+  ctrl::VectorND m_tau_ff;  // feedforward effort/torque from target_joint message
+  ctrl::VectorND m_q_dot_desired;  // desired joint velocity, from target_joint message
+
+  bool m_use_feedforward_torque; //add the m_tau_ff term
 
   double m_vel_old = 0.0;
   double m_last_time = 0.0;

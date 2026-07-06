@@ -16,6 +16,7 @@ MinimalEffortController::on_init() {
   auto_declare<std::string>("ft_sensor_ref_link", "");
   auto_declare<bool>("hand_frame_control", true);
   auto_declare<double>("nullspace_stiffness", 0.0);
+  auto_declare<bool>("use_feedforward_torque", false);
 
   constexpr double default_joint_stiff = 100.0;
 
@@ -73,6 +74,11 @@ MinimalEffortController::on_configure(
       get_node()->get_parameter("nullspace_stiffness").as_double();
   RCLCPP_INFO(get_node()->get_logger(), "Postural task stiffness: %f",
               m_null_space_stiffness);
+              
+  m_use_feedforward_torque =
+      get_node()->get_parameter("use_feedforward_torque").as_bool();
+  RCLCPP_INFO(get_node()->get_logger(), "Use feedforward torque: %s",
+              m_use_feedforward_torque ? "true" : "false");
 
   // Set nullspace damping
   m_null_space_damping = 2 * sqrt(m_null_space_stiffness);
@@ -125,6 +131,8 @@ MinimalEffortController::on_activate(
 
   m_q_desired = Base::m_joint_positions.data;
   m_q_starting_pose = Base::m_joint_positions.data;
+  m_tau_ff = ctrl::VectorND::Zero(Base::m_joint_number);
+  m_q_dot_desired = ctrl::VectorND::Zero(Base::m_joint_number);
 
   return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::
       CallbackReturn::SUCCESS;
@@ -216,23 +224,26 @@ ctrl::VectorND MinimalEffortController::computeTorque() {
   // Compute the task joint torques
   Eigen::VectorXd stiffness_torque =
       m_joint_stiffness.cwiseProduct((m_q_desired - q));
-  Eigen::VectorXd damping_torque = -m_joint_damping.cwiseProduct(q_dot);
+  Eigen::VectorXd damping_torque = -m_joint_damping.cwiseProduct(q_dot-m_q_dot_desired);
   tau_task = stiffness_torque + damping_torque;
 
   ctrl::VectorND tau = tau_task;
-
-  KDL::JntArray tau_coriolis(Base::m_joint_number),
-      tau_gravity(Base::m_joint_number);
-
-  if (m_compensate_gravity) {
-    Base::m_dyn_solver->JntToGravity(Base::m_joint_positions, tau_gravity);
-    tau = tau + tau_gravity.data;
+  if (m_use_feedforward_torque) {
+    tau = tau + m_tau_ff;
   }
-  if (m_compensate_coriolis) {
-    Base::m_dyn_solver->JntToCoriolis(Base::m_joint_positions,
-                                      Base::m_joint_velocities, tau_coriolis);
-    tau = tau + tau_coriolis.data;
-  }
+
+  // KDL::JntArray tau_coriolis(Base::m_joint_number),
+  //     tau_gravity(Base::m_joint_number);
+
+  // if (m_compensate_gravity) {
+  //   Base::m_dyn_solver->JntToGravity(Base::m_joint_positions, tau_gravity);
+  //   tau = tau + tau_gravity.data;
+  // }
+  // if (m_compensate_coriolis) {
+  //   Base::m_dyn_solver->JntToCoriolis(Base::m_joint_positions,
+  //                                     Base::m_joint_velocities, tau_coriolis);
+  //   tau = tau + tau_coriolis.data;
+  // }
   // TODO add nullspace projector
 #if DEBUG
   for (int i = 0; i < 7; i++) {
@@ -277,6 +288,41 @@ void MinimalEffortController::targetJointCallback(
   }
   for (size_t i = 0; i < target->position.size(); ++i) {
     m_q_desired(i) = target->position[i];
+  }
+
+  // Feedforward torque is optional -- if the publisher doesn't fill
+  // `effort`, treat it as zero rather than rejecting the whole message.
+  if (target->effort.empty()) {
+    m_tau_ff.setZero();
+  } else if (target->effort.size() != static_cast<size_t>(Base::m_joint_number)) {
+    auto &clock = *get_node()->get_clock();
+    RCLCPP_WARN_THROTTLE(
+        get_node()->get_logger(), clock, 3000,
+        "Received joint target with wrong effort size (%zu vs %zu), ignoring effort",
+        target->effort.size(), Base::m_joint_number);
+    m_tau_ff.setZero();
+  } else {
+    for (size_t i = 0; i < target->effort.size(); ++i) {
+      m_tau_ff(i) = target->effort[i];
+    }
+  }
+
+  // Desired velocity is optional too -- default to zero if not provided,
+  // so damping falls back to plain -damping*q_dot when no velocity target
+  // is given (equivalent to the original behavior).
+  if (target->velocity.empty()) {
+    m_q_dot_desired.setZero();
+  } else if (target->velocity.size() != static_cast<size_t>(Base::m_joint_number)) {
+    auto &clock = *get_node()->get_clock();
+    RCLCPP_WARN_THROTTLE(
+        get_node()->get_logger(), clock, 3000,
+        "Received joint target with wrong velocity size (%zu vs %zu), ignoring velocity",
+        target->velocity.size(), Base::m_joint_number);
+    m_q_dot_desired.setZero();
+  } else {
+    for (size_t i = 0; i < target->velocity.size(); ++i) {
+      m_q_dot_desired(i) = target->velocity[i];
+    }
   }
 }
 }  // namespace minimal_effort_controller
